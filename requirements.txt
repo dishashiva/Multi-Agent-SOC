@@ -1,0 +1,7 @@
+nvidia_nim_client==1.0.0
+sentry==1.0.0
+investigator==1.0.0
+responder==1.0.0
+watchdog==6.0.0
+requests==2.31.0
+python-dotenv==1.0.1

@@ -1,0 +1,10 @@
+{
+    "description": "Local IP blocklist — add known-bad IPs here",
+    "version": "1.0",
+    "blocked_ips": {
+        "185.220.101.34": "Known Tor exit node / malicious scanner",
+        "45.33.32.156":   "Shodan scanning IP",
+        "104.21.67.89":   "Previously flagged for brute-force attacks",
+        "198.51.100.42":  "TEST-NET (RFC 5737) — used for simulation"
+    }
+}
