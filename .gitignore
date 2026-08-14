@@ -38,7 +38,6 @@ pnpm-debug.log*
 *.log
 logs/*.log
 victim_app/logs/*.log
-sample_target_app/logs/*.log
 soc.log
 *.db
 *.sqlite
