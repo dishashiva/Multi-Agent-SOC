@@ -90,8 +90,9 @@ def main():
     parser.add_argument("--reports", default="./reports",       help="Incident reports output dir")
     parser.add_argument("--nim-url", default="https://integrate.api.nvidia.com/v1", help="NVIDIA NIM base URL")
     parser.add_argument("--model",   default="meta/llama-3.1-8b-instruct", help="NVIDIA NIM model name")
-    parser.add_argument("--api-key", default=os.getenv("NVIDIA_API_KEY"),  help="NVIDIA API Key")
+    parser.add_argument("--api-key", default=os.getenv("NVIDIA_NIM_KEY") or os.getenv("NVIDIA_API_KEY"),  help="NVIDIA API Key")
     parser.add_argument("--live",    action="store_true",        help="Run REAL commands (NOT recommended for demo)")
+    parser.add_argument("--cooldown", type=float, default=3.0,   help="Seconds between API calls (default: 3)")
     args = parser.parse_args()
 
     print(BANNER)
@@ -132,6 +133,7 @@ def main():
         watch_path   = args.logs,
         alert_queue  = alert_queue,
         nim_client   = nim,
+        cooldown     = args.cooldown,
     )
 
     investigator = InvestigatorAgent(

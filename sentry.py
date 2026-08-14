@@ -69,11 +69,13 @@ class _LogEventHandler(FileSystemEventHandler):
     the SentryAgent creates and owns this.
     """
 
-    def __init__(self, alert_queue: queue.Queue, nim: NvidiaNimClient):
+    def __init__(self, alert_queue: queue.Queue, nim: NvidiaNimClient, cooldown: float = 3.0):
         super().__init__()
         self.alert_queue = alert_queue
         self.nim = nim
         self._in_flight: set[str] = set()   # debounce: track files being processed
+        self._cooldown = cooldown            # min seconds between API calls
+        self._last_api_call: float = 0.0
 
     # -- watchdog callbacks ----------------------------------------------------
     def on_created(self, event):
@@ -102,6 +104,14 @@ class _LogEventHandler(FileSystemEventHandler):
             if not content.strip():
                 return
 
+            # --- Rate limit: enforce cooldown between API calls ---
+            now = time.time()
+            elapsed = now - self._last_api_call
+            if elapsed < self._cooldown:
+                wait = self._cooldown - elapsed
+                logger.info(f"[SENTRY] Throttling — waiting {wait:.1f}s before next analysis")
+                time.sleep(wait)
+
             logger.info(f"[SENTRY] Analysing ({trigger}): {file_path}")
 
             # --- ask the LLM ---
@@ -112,6 +122,7 @@ class _LogEventHandler(FileSystemEventHandler):
                 f"--- BEGIN LOG CONTENT ---\n{content}\n--- END LOG CONTENT ---\n\n"
                 f"Respond with JSON only."
             )
+            self._last_api_call = time.time()
             analysis = self.nim.query_json(prompt, system=SENTRY_SYSTEM_PROMPT)
 
             # --- fall back to rule-based if LLM failed ---
@@ -223,19 +234,21 @@ class SentryAgent:
         watch_path: str,
         alert_queue: queue.Queue,
         nim_client: NvidiaNimClient,
+        cooldown: float = 3.0,
     ):
         self.watch_path = watch_path
         self.alert_queue = alert_queue
         self.nim = nim_client
+        self.cooldown = cooldown
         self._observer: Observer | None = None
 
         # Make sure the watched directory exists
         Path(watch_path).mkdir(parents=True, exist_ok=True)
-        logger.info(f"[SENTRY] Initialised. Watching: '{watch_path}'")
+        logger.info(f"[SENTRY] Initialised. Watching: '{watch_path}' (cooldown: {cooldown}s)")
 
     def start(self):
         """Start the file-system observer in its own background thread."""
-        handler = _LogEventHandler(self.alert_queue, self.nim)
+        handler = _LogEventHandler(self.alert_queue, self.nim, cooldown=self.cooldown)
         self._observer = Observer()
         self._observer.schedule(handler, self.watch_path, recursive=True)
         self._observer.start()

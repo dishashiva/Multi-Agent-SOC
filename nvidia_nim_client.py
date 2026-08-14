@@ -4,6 +4,7 @@ Talks to NVIDIA NIM API (internet required for hosted, or local NIM instance).
 """
 
 import json
+import time
 import logging
 import requests
 
@@ -25,6 +26,9 @@ class NvidiaNimClient:
         model: str = "meta/llama-3.1-8b-instruct",
         api_key: str = None
     ):
+        import os
+        if not api_key:
+            api_key = os.getenv("NVIDIA_NIM_KEY") or os.getenv("NVIDIA_API_KEY")
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
@@ -40,17 +44,18 @@ class NvidiaNimClient:
         return headers
 
     # ------------------------------------------------------------------
-    def query(self, prompt: str, system: str = "", timeout: int = 120) -> str:
+    def query(self, prompt: str, system: str = "", timeout: int = 120, retries: int = 3) -> str:
         """
         Send a prompt to the NVIDIA NIM and return its text response.
+        Retries on rate-limit (429) with exponential backoff.
         """
         url = f"{self.base_url}/chat/completions"
-        
+
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        
+
         payload = {
             "model": self.model,
             "messages": messages,
@@ -60,36 +65,53 @@ class NvidiaNimClient:
             "stream": False,
         }
 
-        try:
-            response = requests.post(
-                url, 
-                headers=self._get_headers(), 
-                json=payload, 
-                timeout=timeout
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            # OpenAI compatible response structure
-            if "choices" in result and len(result["choices"]) > 0:
-                return result["choices"][0]["message"]["content"].strip()
-            return ""
+        last_error = None
+        for attempt in range(retries):
+            try:
+                response = requests.post(
+                    url,
+                    headers=self._get_headers(),
+                    json=payload,
+                    timeout=timeout,
+                )
 
-        except requests.exceptions.ConnectionError:
-            logger.error(f"[NvidiaNimClient] Cannot reach NIM at {self.base_url}")
-            return "NIM_UNAVAILABLE"
+                # Rate limited — back off and retry
+                if response.status_code == 429:
+                    wait = min(2 ** attempt * 2, 30)  # 2s, 4s, 8s, cap 30s
+                    logger.warning(
+                        f"[NvidiaNimClient] Rate limited (429). "
+                        f"Retrying in {wait}s (attempt {attempt + 1}/{retries})"
+                    )
+                    time.sleep(wait)
+                    continue
 
-        except requests.exceptions.HTTPError as exc:
-            logger.error(f"[NvidiaNimClient] HTTP Error: {exc.response.text}")
-            return f"NIM_HTTP_ERROR:{exc.response.status_code}"
+                response.raise_for_status()
+                result = response.json()
 
-        except requests.exceptions.Timeout:
-            logger.error(f"[NvidiaNimClient] Request timed out after {timeout}s")
-            return "NIM_TIMEOUT"
+                if "choices" in result and len(result["choices"]) > 0:
+                    return result["choices"][0]["message"]["content"].strip()
+                return ""
 
-        except Exception as exc:
-            logger.error(f"[NvidiaNimClient] Unexpected error: {exc}")
-            return f"NIM_ERROR:{exc}"
+            except requests.exceptions.ConnectionError:
+                logger.error(f"[NvidiaNimClient] Cannot reach NIM at {self.base_url}")
+                return "NIM_UNAVAILABLE"
+
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else "?"
+                logger.error(f"[NvidiaNimClient] HTTP Error: {exc.response.text}")
+                return f"NIM_HTTP_ERROR:{status}"
+
+            except requests.exceptions.Timeout:
+                logger.error(f"[NvidiaNimClient] Request timed out after {timeout}s")
+                return "NIM_TIMEOUT"
+
+            except Exception as exc:
+                logger.error(f"[NvidiaNimClient] Unexpected error: {exc}")
+                return f"NIM_ERROR:{exc}"
+
+        # All retries exhausted on 429
+        logger.error(f"[NvidiaNimClient] Rate limit persists after {retries} retries")
+        return "NIM_HTTP_ERROR:429"
 
     # ------------------------------------------------------------------
     def query_json(self, prompt: str, system: str = "", timeout: int = 120) -> dict:
