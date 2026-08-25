@@ -2,10 +2,14 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-
-function SeverityBadge({ v }) {
-  return <span className={`badge ${v}`}>{v}</span>;
-}
+import {
+  FileText,
+  Search,
+  RefreshCw,
+  X,
+  ArrowRight,
+  ShieldCheck,
+} from '../components/Icons';
 
 function IncidentModal({ id, onClose }) {
   const [content, setContent] = useState('');
@@ -22,14 +26,24 @@ function IncidentModal({ id, onClose }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <span className="modal-title">📄 {id}</span>
-          <span className="modal-close" onClick={onClose}>✕</span>
+          <span className="modal-title">
+            <FileText size={18} />
+            {id}
+          </span>
+          <button className="modal-close" onClick={onClose} aria-label="Close modal">
+            <X size={18} />
+          </button>
         </div>
         <div className="modal-body">
-          {loading
-            ? <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><span className="spinner" /></div>
-            : <div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown></div>
-          }
+          {loading ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+              <span className="spinner" />
+            </div>
+          ) : (
+            <div className="markdown-body">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -52,12 +66,11 @@ export default function Incidents() {
     }
   }
 
-  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, []);
-
-  function parseSeverity(id) {
-    if (id.includes('CRIT')) return 'CRITICAL';
-    return 'INFO';
-  }
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, []);
 
   const filtered = incidents.filter(inc => !search || inc.id.toLowerCase().includes(search.toLowerCase()));
 
@@ -68,44 +81,72 @@ export default function Incidents() {
       <div className="page-header">
         <div>
           <h2>Incident Reports</h2>
-          <p>{incidents.length} incidents on record</p>
+          <p>{incidents.length} forensic investigation reports on record</p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <input className="search-input" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
-          <button className="btn btn-secondary" onClick={load}>↻ Refresh</button>
+          <div className="search-input-wrapper" style={{ width: 220 }}>
+            <Search size={14} className="search-icon" />
+            <input
+              className="search-input"
+              placeholder="Search reports…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ width: '100%' }}
+            />
+          </div>
+          <button className="btn btn-secondary" onClick={load}>
+            <RefreshCw size={14} />
+            Refresh
+          </button>
         </div>
       </div>
 
       <div className="card" style={{ padding: 0 }}>
-        {loading
-          ? <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><span className="spinner" /></div>
-          : filtered.length === 0
-          ? <div className="empty-state"><div className="empty-icon">🔍</div><div className="empty-text">No incidents yet. The system will generate reports as threats are detected.</div></div>
-          : (
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+            <span className="spinner" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">
+              <ShieldCheck size={22} />
+            </div>
+            <div className="empty-text">No incident records found. As security threats are identified, forensic reports will appear here.</div>
+          </div>
+        ) : (
+          <div className="data-table-wrapper">
             <table className="data-table">
               <thead>
                 <tr>
                   <th>Incident ID</th>
-                  <th>Created</th>
-                  <th>Size</th>
-                  <th></th>
+                  <th>Timestamp</th>
+                  <th>Report Size</th>
+                  <th style={{ textAlign: 'right' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(inc => (
                   <tr key={inc.id} style={{ cursor: 'pointer' }} onClick={() => setSelected(inc.id)}>
-                    <td className="mono" style={{ color: 'var(--cyan)' }}>{inc.id}</td>
+                    <td className="mono" style={{ color: 'var(--primary)', fontWeight: 600 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <FileText size={15} style={{ color: 'var(--text-muted)' }} />
+                        {inc.id}
+                      </div>
+                    </td>
                     <td>{new Date(inc.created).toLocaleString()}</td>
                     <td>{(inc.size / 1024).toFixed(1)} KB</td>
-                    <td>
-                      <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }}>View →</button>
+                    <td style={{ textAlign: 'right' }}>
+                      <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }}>
+                        View Report
+                        <ArrowRight size={12} />
+                      </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )
-        }
+          </div>
+        )}
       </div>
     </div>
   );

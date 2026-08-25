@@ -156,3 +156,13 @@ def get_stats() -> dict:
         "recent_alerts_1h": recent_alerts,
         "total": sum(by_agent.values()),
     }
+
+
+def clear_all_events():
+    """Truncate the audit_events table and reset auto-increment index."""
+    with _lock:
+        conn = _get_conn()
+        conn.execute("DELETE FROM audit_events")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name='audit_events'")
+        conn.commit()
+        logger.info("[AuditDB] All audit events cleared.")

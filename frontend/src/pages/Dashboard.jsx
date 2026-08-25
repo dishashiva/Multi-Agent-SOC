@@ -5,8 +5,28 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar, Cell,
 } from 'recharts';
+import {
+  AlertTriangle,
+  Zap,
+  Search,
+  Clock,
+  Layers,
+  Folder,
+  Play,
+  Wrench,
+  TrendingUp,
+  Target,
+  Radio,
+  CheckCircle2,
+} from '../components/Icons';
 
-const SEV_COLORS = { CRITICAL: '#ff3b3b', HIGH: '#ff8c00', MEDIUM: '#ffd700', LOW: '#00d4ff', INFO: '#58a6ff' };
+const SEV_COLORS = {
+  CRITICAL: '#dc2626',
+  HIGH:     '#ea580c',
+  MEDIUM:   '#d97706',
+  LOW:      '#0284c7',
+  INFO:     '#2563eb',
+};
 
 function formatUptime(s) {
   if (!s) return '—';
@@ -14,10 +34,14 @@ function formatUptime(s) {
   return `${h ? h + 'h ' : ''}${m ? m + 'm ' : ''}${sec}s`;
 }
 
-function Kpi({ label, value, sub, accent, icon }) {
+function Kpi({ label, value, sub, accent, IconComponent }) {
   return (
     <div className={`kpi-card ${accent}`}>
-      <div className="kpi-icon">{icon}</div>
+      {IconComponent && (
+        <div className="kpi-icon">
+          <IconComponent size={26} />
+        </div>
+      )}
       <div className="kpi-label">{label}</div>
       <div className="kpi-value">{value ?? '—'}</div>
       {sub && <div className="kpi-sub">{sub}</div>}
@@ -82,7 +106,7 @@ export default function Dashboard({ status }) {
   const running        = status?.running;
   const uptime         = formatUptime(status?.uptime_s);
 
-  const sevData = Object.entries(stats?.by_severity ?? {}).map(([k, v]) => ({ name: k, count: v, color: SEV_COLORS[k] }));
+  const sevData = Object.entries(stats?.by_severity ?? {}).map(([k, v]) => ({ name: k, count: v, color: SEV_COLORS[k] || '#64748b' }));
 
   // High risk notifications needing fix
   const highRiskNotifs = notifications
@@ -94,16 +118,26 @@ export default function Dashboard({ status }) {
       <div className="page-header">
         <div>
           <h2>Security Operations Dashboard</h2>
-          <p>{running ? `Monitoring active · Uptime ${uptime}` : 'Engine is stopped — Click Start Engine below to begin live log monitoring'}</p>
+          <p>{running ? `Active monitoring in progress · Engine Uptime: ${uptime}` : 'Engine is stopped — Start the monitoring engine to process log streams'}</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {!running && (
             <button className="btn btn-primary" onClick={handleStart} disabled={starting}>
-              {starting ? 'Starting…' : '▶ Start Engine'}
+              {starting ? (
+                <>
+                  <span className="spinner" style={{ borderTopColor: '#ffffff' }} />
+                  Starting…
+                </>
+              ) : (
+                <>
+                  <Play size={14} />
+                  Start Engine
+                </>
+              )}
             </button>
           )}
           <span className={`status-dot ${running ? 'running' : 'idle'}`} />
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: running ? 'var(--ok)' : 'var(--text-muted)' }}>
             {running ? 'LIVE' : 'OFFLINE'}
           </span>
         </div>
@@ -112,22 +146,25 @@ export default function Dashboard({ status }) {
       {/* High-Risk Action Required Banner */}
       {highRiskNotifs.length > 0 && (
         <div style={{
-          background: 'rgba(255, 59, 59, 0.12)',
-          border: '1px solid rgba(255, 59, 59, 0.4)',
-          borderRadius: 8,
+          background: 'var(--critical-dim)',
+          border: '1px solid var(--critical-border)',
+          borderRadius: 'var(--radius-lg)',
           padding: '16px 20px',
           marginBottom: 20,
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
+          gap: 16,
+          boxShadow: 'var(--shadow-xs)',
         }}>
           <div>
-            <div style={{ color: '#ff3b3b', fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>🚨 HIGH RISK THREAT DETECTED</span>
+            <div style={{ color: 'var(--critical)', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AlertTriangle size={18} />
+              <span>HIGH RISK THREAT DETECTED</span>
               <span className="badge CRITICAL" style={{ fontSize: 10 }}>User Fix Required</span>
             </div>
             <div style={{ fontSize: 13, color: 'var(--text-primary)', marginTop: 4 }}>
-              Incident <strong>{highRiskNotifs[0].incident_id}</strong>: {highRiskNotifs[0].reason || highRiskNotifs[0].message || 'Privilege escalation / high risk action detected.'}
+              Incident <strong>{highRiskNotifs[0].incident_id}</strong>: {highRiskNotifs[0].reason || highRiskNotifs[0].message || 'Privilege escalation or high risk action detected.'}
             </div>
           </div>
           <button
@@ -136,51 +173,66 @@ export default function Dashboard({ status }) {
             onClick={() => handleFix(highRiskNotifs[0].incident_id)}
             disabled={fixingId === highRiskNotifs[0].incident_id}
           >
-            {fixingId === highRiskNotifs[0].incident_id ? 'Applying Fix…' : '🔧 Apply Fix Now'}
+            {fixingId === highRiskNotifs[0].incident_id ? (
+              <>
+                <span className="spinner" style={{ borderTopColor: '#ffffff' }} />
+                Applying Fix…
+              </>
+            ) : (
+              <>
+                <Wrench size={14} />
+                Apply Fix Now
+              </>
+            )}
           </button>
         </div>
       )}
 
       {/* KPI Row */}
       <div className="kpi-grid">
-        <Kpi label="Live Alerts" value={liveAlerts} sub="since page load" accent="crit" icon="🚨" />
-        <Kpi label="Total Alerts" value={totalAlerts} sub="all time" accent="warn" icon="⚡" />
-        <Kpi label="Incidents" value={totalIncidents} sub="investigations" accent="purple" icon="🔍" />
-        <Kpi label="Uptime" value={running ? uptime : 'Offline'} sub="engine status" accent={running ? 'ok' : 'cyan'} icon="⏱️" />
-        <Kpi label="Queue Depth" value={status ? (status.alert_queue + status.report_queue) : 0} sub="pending tasks" accent="cyan" icon="📦" />
-        <Kpi label="Watch Path" value={status?.watch_path ? '✓ Active' : 'Not set'} sub={status?.watch_path || '—'} accent={status?.watch_path ? 'ok' : 'cyan'} icon="📁" />
+        <Kpi label="Live Alerts" value={liveAlerts} sub="since session start" accent="crit" IconComponent={AlertTriangle} />
+        <Kpi label="Total Alerts" value={totalAlerts} sub="historical total" accent="warn" IconComponent={Zap} />
+        <Kpi label="Incidents" value={totalIncidents} sub="analyzed reports" accent="purple" IconComponent={Search} />
+        <Kpi label="Uptime" value={running ? uptime : 'Offline'} sub="engine status" accent={running ? 'ok' : 'cyan'} IconComponent={Clock} />
+        <Kpi label="Queue Depth" value={status ? (status.alert_queue + status.report_queue) : 0} sub="pending queue tasks" accent="cyan" IconComponent={Layers} />
+        <Kpi label="Watch Path" value={status?.watch_path ? 'Active' : 'Not set'} sub={status?.watch_path || '—'} accent={status?.watch_path ? 'ok' : 'cyan'} IconComponent={Folder} />
       </div>
 
       {/* Activity Chart */}
       <div className="chart-card">
-        <div className="card-title">Live Activity — Events per Minute</div>
+        <div className="card-title">
+          <TrendingUp size={16} />
+          Live Activity — Events per Minute
+        </div>
         {chartData.length === 0 ? (
-          <div className="empty-state" style={{ padding: 40 }}>
-            <div className="empty-icon">📈</div>
-            <div className="empty-text">Activity chart populates when the engine is running</div>
+          <div className="empty-state" style={{ padding: 36 }}>
+            <div className="empty-icon">
+              <TrendingUp size={22} />
+            </div>
+            <div className="empty-text">Activity metrics populate automatically when the engine is actively monitoring log files</div>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+            <AreaChart data={chartData} margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="gA" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#ff3b3b" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#ff3b3b" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#dc2626" stopOpacity={0.2} />
+                  <stop offset="95%" stopColor="#dc2626" stopOpacity={0.0} />
                 </linearGradient>
                 <linearGradient id="gN" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#00d4ff" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#00d4ff" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#2563eb" stopOpacity={0.15} />
+                  <stop offset="95%" stopColor="#2563eb" stopOpacity={0.0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(48,54,61,0.6)" />
-              <XAxis dataKey="time" tick={{ fill: '#484f58', fontSize: 11 }} />
-              <YAxis tick={{ fill: '#484f58', fontSize: 11 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="time" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#cbd5e1' }} />
+              <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#cbd5e1' }} />
               <Tooltip
-                contentStyle={{ background: '#1c2330', border: '1px solid #30363d', borderRadius: 8, color: '#e6edf3' }}
-                labelStyle={{ color: '#8b949e' }}
+                contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, color: '#0f172a', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.08)' }}
+                labelStyle={{ color: '#64748b', fontWeight: 600 }}
               />
-              <Area type="monotone" dataKey="alerts" stroke="#ff3b3b" fill="url(#gA)" strokeWidth={2} name="Alerts" />
-              <Area type="monotone" dataKey="normal" stroke="#00d4ff" fill="url(#gN)" strokeWidth={1.5} name="Normal" />
+              <Area type="monotone" dataKey="alerts" stroke="#dc2626" fill="url(#gA)" strokeWidth={2} name="Threat Alerts" />
+              <Area type="monotone" dataKey="normal" stroke="#2563eb" fill="url(#gN)" strokeWidth={1.5} name="Normal Events" />
             </AreaChart>
           </ResponsiveContainer>
         )}
@@ -189,16 +241,26 @@ export default function Dashboard({ status }) {
       {/* Two-col row: severity breakdown + recent events */}
       <div className="section-grid two-col">
         <div className="card">
-          <div className="card-title">Threats by Severity</div>
-          {sevData.length === 0
-            ? <div className="empty-state" style={{ padding: 30 }}><div className="empty-icon">🎯</div><div className="empty-text">No events yet</div></div>
-            : (
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={sevData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(48,54,61,0.6)" />
-                <XAxis dataKey="name" tick={{ fill: '#484f58', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#484f58', fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: '#1c2330', border: '1px solid #30363d', borderRadius: 8, color: '#e6edf3' }} />
+          <div className="card-title">
+            <Target size={16} />
+            Threats by Severity
+          </div>
+          {sevData.length === 0 ? (
+            <div className="empty-state" style={{ padding: 28 }}>
+              <div className="empty-icon">
+                <Target size={22} />
+              </div>
+              <div className="empty-text">No threat classifications recorded yet</div>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={190}>
+              <BarChart data={sevData} margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#cbd5e1' }} />
+                <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#cbd5e1' }} />
+                <Tooltip
+                  contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, color: '#0f172a', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.08)' }}
+                />
                 <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                   {sevData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                 </Bar>
@@ -208,22 +270,37 @@ export default function Dashboard({ status }) {
         </div>
 
         <div className="card">
-          <div className="card-title">Recent Live Events</div>
+          <div className="card-title">
+            <Radio size={16} />
+            Recent Live Events
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
             {events.slice(0, 12).map((ev, i) => (
-              <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12, padding: '4px 0', borderBottom: '1px solid rgba(48,54,61,0.4)' }}>
-                <span className={`badge ${ev.severity || 'INFO'}`} style={{ flexShrink: 0 }}>{ev.type}</span>
-                <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  gap: 10,
+                  alignItems: 'center',
+                  fontSize: 12.5,
+                  padding: '6px 4px',
+                  borderBottom: '1px solid var(--border)',
+                }}
+              >
+                <span className={`badge ${ev.severity || 'INFO'}`} style={{ flexShrink: 0 }}>
+                  {ev.type}
+                </span>
+                <span style={{ color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {ev.data?.message || ev.data?.reason || ev.data?.alert_id || ev.type}
                 </span>
-                <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10, flexShrink: 0 }}>
+                <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11, flexShrink: 0 }}>
                   {new Date(ev.timestamp).toLocaleTimeString()}
                 </span>
               </div>
             ))}
             {events.length === 0 && (
-              <div className="empty-state" style={{ padding: 20 }}>
-                <div className="empty-text">Waiting for live events…</div>
+              <div className="empty-state" style={{ padding: 24 }}>
+                <div className="empty-text">Awaiting real-time pipeline events…</div>
               </div>
             )}
           </div>

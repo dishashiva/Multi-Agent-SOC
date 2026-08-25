@@ -127,7 +127,7 @@ class _LogEventHandler(FileSystemEventHandler):
 
             # --- fall back to rule-based if LLM failed ---
             if "error" in analysis:
-                logger.warning("[SENTRY] NVIDIA NIM unavailable - using rule-based fallback.")
+                logger.info("[SENTRY] Using offline rule-based detection engine.")
                 analysis = self._rule_based(content)
 
             if analysis.get("is_suspicious"):

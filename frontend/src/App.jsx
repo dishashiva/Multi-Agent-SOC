@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useLocation } from 'react-router-dom';
 import Sidebar      from './Sidebar';
 import { api }      from './api';
 import { useSoc }   from './SocContext';
@@ -14,19 +14,20 @@ import AiHealth     from './pages/AiHealth';
 import Settings     from './pages/Settings';
 
 const PAGE_TITLES = {
-  '/':              'Dashboard',
-  '/agents':        'Agent Status',
-  '/logs':          'Live Logs',
-  '/incidents':     'Incidents',
-  '/notifications': 'Notifications',
-  '/audit':         'Audit Log',
-  '/health':        'AI Health',
-  '/settings':      'Settings',
+  '/':              'Dashboard Overview',
+  '/agents':        'Agent Status & Pipeline',
+  '/logs':          'Live Agent Logs',
+  '/incidents':     'Incident Reports',
+  '/notifications': 'Human Escalation Alerts',
+  '/audit':         'System Audit Trail',
+  '/health':        'AI Engine & API Health',
+  '/settings':      'System Configuration',
 };
 
 export default function App() {
   const [status, setStatus] = useState(null);
   const { wsConnected }     = useSoc();
+  const location            = useLocation();
 
   const refreshStatus = useCallback(async () => {
     try { setStatus(await api.status()); } catch { /* backend not running yet */ }
@@ -38,8 +39,7 @@ export default function App() {
     return () => clearInterval(t);
   }, [refreshStatus]);
 
-  const path = window.location.pathname;
-  const pageTitle = PAGE_TITLES[path] || 'SOC-in-a-Box';
+  const pageTitle = PAGE_TITLES[location.pathname] || 'SOC-in-a-Box';
 
   return (
     <div className="app-layout">
@@ -51,11 +51,11 @@ export default function App() {
           <span className="topbar-title">{pageTitle}</span>
           <div className="topbar-status">
             <span className={`status-dot ${status?.running ? 'running' : 'idle'}`} />
-            <span>{status?.running ? `Engine Running · ${status.watch_path}` : 'Engine Stopped'}</span>
+            <span>{status?.running ? `Engine Active · ${status.watch_path}` : 'Engine Stopped'}</span>
           </div>
-          <div className="topbar-status" style={{ marginLeft: 16 }}>
+          <div className="topbar-status">
             <span className={`status-dot ${wsConnected ? 'running' : 'idle'}`} />
-            <span>{wsConnected ? 'Live' : 'Connecting…'}</span>
+            <span>{wsConnected ? 'Live Feed Connected' : 'Feed Connecting…'}</span>
           </div>
         </header>
 

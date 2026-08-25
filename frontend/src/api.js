@@ -54,6 +54,7 @@ export const api = {
   health:         ()       => request('/api/health'),
   notifications:  ()       => request('/api/notifications'),
   fixIncident:    (id)     => request(`/api/incidents/${id}/fix`, { method: 'POST' }),
+  reset:          ()       => request('/api/reset', { method: 'POST' }),
 };
 
 export const WS_URL = `${activeBase.replace(/^http/, 'ws')}/ws/events`;
