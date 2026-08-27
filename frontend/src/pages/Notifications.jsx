@@ -170,10 +170,23 @@ export default function Notifications() {
     }
   }
 
-  const all = [
+  const rawList = [
     ...liveNotifs.map(n => ({ ...n.data, _live: true, timestamp: n.timestamp })),
     ...historical,
   ];
+
+  const seenIds = new Set();
+  const all = rawList.filter(n => {
+    const incId = n?.incident_id;
+    if (!incId || typeof incId !== 'string' || !incId.startsWith('INC-')) {
+      return false;
+    }
+    if (seenIds.has(incId)) {
+      return false;
+    }
+    seenIds.add(incId);
+    return true;
+  });
 
   return (
     <div className="page">

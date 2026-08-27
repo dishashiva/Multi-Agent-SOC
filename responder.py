@@ -178,8 +178,6 @@ class ResponderAgent:
         border = "=" * 64
         banner = (
             f"\n{border}\n"
-            f"!!  HUMAN INTERVENTION REQUIRED  !!\n"
-            f"{border}\n"
             f"Incident ID : {incident_id}\n"
             f"Time        : {datetime.now().isoformat()}\n"
             f"Reason      : {reason}\n"

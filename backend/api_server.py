@@ -663,9 +663,10 @@ async def get_notifications():
     blocks = [b.strip() for b in text.split("=" * 64) if b.strip()]
 
     notifications = []
+    seen_ids = set()
     for block in blocks:
         lines = block.splitlines()
-        entry = {"raw": block, "incident_id": None, "timestamp": None, "reason": None}
+        entry = {"raw": block, "incident_id": None, "timestamp": None, "reason": None, "report_path": None}
         for ln in lines:
             if ln.startswith("Incident ID :"):
                 entry["incident_id"] = ln.split(":", 1)[-1].strip()
@@ -673,7 +674,13 @@ async def get_notifications():
                 entry["timestamp"] = ln.split(":", 1)[-1].strip()
             elif ln.startswith("Reason      :"):
                 entry["reason"] = ln.split(":", 1)[-1].strip()
-        notifications.append(entry)
+            elif ln.startswith("Report File :"):
+                entry["report_path"] = ln.split(":", 1)[-1].strip()
+
+        # Only retain valid incidents with a real INC- ID (filters out header banners)
+        if entry["incident_id"] and entry["incident_id"].startswith("INC-") and entry["incident_id"] not in seen_ids:
+            seen_ids.add(entry["incident_id"])
+            notifications.append(entry)
 
     return {"notifications": list(reversed(notifications)), "total": len(notifications)}
 
