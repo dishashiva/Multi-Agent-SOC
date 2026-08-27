@@ -955,17 +955,26 @@ html, body, #root {
 .markdown-body hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
 /* ============================================================
-   Modal
+   Modal & Overlay
    ============================================================ */
-.modal-overlay {
+.modal-overlay,
+.modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(4px);
-  z-index: 100;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px;
   animation: fadeIn 0.15s ease-out;
 }
 
@@ -1217,14 +1226,17 @@ html, body, #root {
    Agentic CLI Terminal Modal
    ============================================================ */
 .terminal-window {
+  position: relative;
+  z-index: 10000;
   background: #0f172a;
   border-radius: var(--radius-lg);
   border: 1px solid #334155;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 10px 15px -3px rgba(0, 0, 0, 0.5);
   font-family: var(--font-mono);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  animation: slideUp 0.2s ease-out;
 }
 
 .terminal-header {
