@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useSoc } from '../SocContext';
 import {
@@ -13,7 +14,7 @@ import {
   Layers,
   Folder,
   Play,
-  Wrench,
+  ArrowRight,
   TrendingUp,
   Target,
   Radio,
@@ -50,12 +51,11 @@ function Kpi({ label, value, sub, accent, IconComponent }) {
 }
 
 export default function Dashboard({ status }) {
+  const navigate = useNavigate();
   const { events, liveAlerts, notifications } = useSoc();
-  const [stats, setStats]    = useState(null);
+  const [stats, setStats]         = useState(null);
   const [chartData, setChartData] = useState([]);
-  const [fixedIds, setFixedIds] = useState(new Set());
-  const [starting, setStarting] = useState(false);
-  const [fixingId, setFixingId] = useState(null);
+  const [starting, setStarting]   = useState(false);
 
   const load = useCallback(async () => {
     try { setStats(await api.auditStats()); } catch { /* ignore */ }
@@ -72,18 +72,6 @@ export default function Dashboard({ status }) {
       alert('Failed to start engine: ' + err.message);
     } finally {
       setStarting(false);
-    }
-  }
-
-  async function handleFix(id) {
-    setFixingId(id);
-    try {
-      await api.fixIncident(id);
-      setFixedIds(prev => new Set(prev).add(id));
-    } catch (err) {
-      alert('Failed to apply fix: ' + err.message);
-    } finally {
-      setFixingId(null);
     }
   }
 
@@ -108,10 +96,17 @@ export default function Dashboard({ status }) {
 
   const sevData = Object.entries(stats?.by_severity ?? {}).map(([k, v]) => ({ name: k, count: v, color: SEV_COLORS[k] || '#64748b' }));
 
+  // Check resolved incidents from storage
+  let resolvedMap = {};
+  try {
+    const saved = localStorage.getItem('soc_resolved_incidents');
+    if (saved) resolvedMap = JSON.parse(saved);
+  } catch { /* ignore */ }
+
   // High risk notifications needing fix
   const highRiskNotifs = notifications
     .map(n => n.data || n)
-    .filter(n => n.incident_id && !fixedIds.has(n.incident_id));
+    .filter(n => n.incident_id && !resolvedMap[n.incident_id]);
 
   return (
     <div className="page">
@@ -169,21 +164,11 @@ export default function Dashboard({ status }) {
           </div>
           <button
             className="btn btn-danger"
-            style={{ padding: '8px 16px', fontSize: 13, flexShrink: 0 }}
-            onClick={() => handleFix(highRiskNotifs[0].incident_id)}
-            disabled={fixingId === highRiskNotifs[0].incident_id}
+            style={{ padding: '8px 18px', fontSize: 13, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={() => navigate('/notifications')}
           >
-            {fixingId === highRiskNotifs[0].incident_id ? (
-              <>
-                <span className="spinner" style={{ borderTopColor: '#ffffff' }} />
-                Applying Fix…
-              </>
-            ) : (
-              <>
-                <Wrench size={14} />
-                Apply Fix Now
-              </>
-            )}
+            <span>View Risks</span>
+            <ArrowRight size={14} />
           </button>
         </div>
       )}
