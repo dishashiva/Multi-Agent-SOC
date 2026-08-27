@@ -16,15 +16,20 @@ export default function LiveLogs() {
   const [search, setSearch]         = useState('');
   const [logs, setLogs]             = useState([]);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const logContainerRef             = useRef(null);
   const topRef                      = useRef(null);
 
   // Fetch historical logs on mount + refresh
   async function fetchLogs() {
+    setRefreshing(true);
     try {
       const res = await api.logs({ limit: 300, level: level === 'ALL' ? '' : level, search });
       setLogs(res.entries || []);
     } catch { /* ignore */ }
+    finally {
+      setTimeout(() => setRefreshing(false), 450);
+    }
   }
 
   useEffect(() => { fetchLogs(); }, [level, search]);
@@ -56,9 +61,14 @@ export default function LiveLogs() {
           <h2>Live Agent Logs</h2>
           <p>Real-time log stream · {allLines.length} events buffered · Newest logs appear at top</p>
         </div>
-        <button className="btn btn-secondary" onClick={fetchLogs}>
-          <RefreshCw size={14} />
-          Refresh
+        <button
+          className="btn btn-secondary"
+          onClick={fetchLogs}
+          disabled={refreshing}
+          style={{ minWidth: 105, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+        >
+          <RefreshCw size={14} className={refreshing ? 'spin-icon' : ''} />
+          <span>{refreshing ? 'Refreshed!' : 'Refresh'}</span>
         </button>
       </div>
 

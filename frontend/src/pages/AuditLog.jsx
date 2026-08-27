@@ -12,21 +12,24 @@ const SEVERITIES = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 const PAGE_SIZE  = 50;
 
 export default function AuditLog() {
-  const [events, setEvents]     = useState([]);
-  const [total, setTotal]       = useState(0);
-  const [page, setPage]         = useState(0);
-  const [agent, setAgent]       = useState('');
-  const [severity, setSeverity] = useState('');
-  const [loading, setLoading]   = useState(false);
+  const [events, setEvents]         = useState([]);
+  const [total, setTotal]           = useState(0);
+  const [page, setPage]             = useState(0);
+  const [agent, setAgent]           = useState('');
+  const [severity, setSeverity]     = useState('');
+  const [loading, setLoading]       = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   async function load() {
     setLoading(true);
+    setRefreshing(true);
     try {
       const res = await api.audit({ limit: PAGE_SIZE, offset: page * PAGE_SIZE, agent, severity });
       setEvents(res.events || []);
       setTotal(res.total || 0);
     } finally {
       setLoading(false);
+      setTimeout(() => setRefreshing(false), 450);
     }
   }
 
@@ -41,9 +44,14 @@ export default function AuditLog() {
           <h2>System Audit Trail</h2>
           <p>{total} total structured security events recorded</p>
         </div>
-        <button className="btn btn-secondary" onClick={load}>
-          <RefreshCw size={14} />
-          Refresh
+        <button
+          className="btn btn-secondary"
+          onClick={load}
+          disabled={refreshing || loading}
+          style={{ minWidth: 105, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+        >
+          <RefreshCw size={14} className={refreshing ? 'spin-icon' : ''} />
+          <span>{refreshing ? 'Refreshed!' : 'Refresh'}</span>
         </button>
       </div>
 
