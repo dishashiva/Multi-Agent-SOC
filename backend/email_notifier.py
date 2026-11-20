@@ -41,8 +41,8 @@ def reset_anti_spam():
 
 
 def _get_config() -> dict:
-    user = os.getenv("SMTP_USER", "darshanxd@yahoo.com")
-    passwd = os.getenv("SMTP_PASS") or os.getenv("SMTP_PASSWORD", "dhgcrxoltibibtaf")
+    user = os.getenv("SMTP_USER", "")
+    passwd = os.getenv("SMTP_PASS") or os.getenv("SMTP_PASSWORD", "")
     host = os.getenv("SMTP_HOST", "smtp.mail.yahoo.com")
     port_str = os.getenv("SMTP_PORT", "587")
     try:
